@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from generator import load_csm_1b, Segment, load_audio
+from generator import load_csm_1b, Segment
 
 app = FastAPI()
 
@@ -19,6 +19,12 @@ app = FastAPI()
 _job_queue: "queue.Queue[Tuple[str, str, int, float, queue.Queue]]" = queue.Queue()
 _generator = None
 
+def load_audio(path, generator):
+    wav, sr = torchaudio.load(path)
+    wav = torchaudio.functional.resample(
+        wav.squeeze(0), sr, generator.sample_rate
+    )
+    return wav
 
 class TTSRequest(BaseModel):
     text: str
@@ -35,27 +41,27 @@ def _worker():
         Segment(
             text="You've got about 20 unread Slack messages. Want a quick digest?",
             speaker=0,
-            audio=load_audio("refs/ref_0.wav"),
+            audio=load_audio("refs/ref_0.wav", _generator),
         ),
         Segment(
             text="That summary I made yesterday is still in drafts. Should I post it?",
             speaker=0,
-            audio=load_audio("refs/ref_1.wav"),
+            audio=load_audio("refs/ref_1.wav", _generator),
         ),
         Segment(
             text="Your draft proposal looks almost done",
             speaker=0,
-            audio=load_audio("refs/ref_2.wav"),
+            audio=load_audio("refs/ref_2.wav", _generator),
         ),
         Segment(
             text="Wow, your CPU temperature just spiked. Either you're training a model or launching a rocket.",
             speaker=0,
-            audio=load_audio("refs/ref_3.wav"),
+            audio=load_audio("refs/ref_3.wav", _generator),
         ),
         Segment(
             text="You're on a roll today. Keep that streak going.",
             speaker=0,
-            audio=load_audio("refs/ref_4.wav"),
+            audio=load_audio("refs/ref_4.wav", _generator),
         ),
     ]
 
