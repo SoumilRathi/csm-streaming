@@ -5,7 +5,7 @@ RUN apt-get update && \
       python3 python3-pip python3-venv \
       git \
       ffmpeg \
-      libportaudio2 libportaudio-dev \
+      libportaudio2 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -20,4 +20,4 @@ RUN chmod +x /app/start.sh
 EXPOSE 8000
 ENV PYTHONUNBUFFERED=1
 
-CMD ["/app/start.sh"]
+CMD ["/app/start.sh"] 
