@@ -1,6 +1,8 @@
 # tts_server.py
 import io
-from typing import Generator as PyGenerator
+import threading
+import queue
+from typing import Generator as PyGenerator, Tuple, Any
 
 import torch
 import torchaudio
@@ -11,7 +13,11 @@ from pydantic import BaseModel
 from generator import load_csm_1b
 
 app = FastAPI()
-generator = None
+
+# job_type: "wav" or "stream"
+# job: (job_type, text, speaker, result_queue)
+_job_queue: "queue.Queue[Tuple[str, str, int, queue.Queue]]" = queue.Queue()
+_generator = None
 
 
 class TTSRequest(BaseModel):
@@ -19,22 +25,67 @@ class TTSRequest(BaseModel):
     speaker: int = 0
 
 
+def _worker():
+    global _generator
+    print("[worker] Loading CSM-1B (with compile)…")
+    _generator = load_csm_1b("cuda")
+    print("[worker] CSM-1B ready.")
+
+    while True:
+        job_type, text, speaker, result_q = _job_queue.get()
+        try:
+            if job_type == "wav":
+                # full generation
+                audio = _generator.generate(
+                    text=text,
+                    speaker=speaker,
+                    context=[],
+                    stream=True,  # internal streaming, but we return full tensor
+                )
+                result_q.put(audio)
+
+            elif job_type == "stream":
+                # streaming generation: push chunks into result_q
+                for chunk in _generator.generate_stream(
+                    text=text,
+                    speaker=speaker,
+                    context=[],
+                ):
+                    if chunk is None or chunk.numel() == 0:
+                        continue
+                    if isinstance(chunk, torch.Tensor):
+                        chunk = chunk.detach().to(torch.float32).cpu()
+                    result_q.put(chunk)
+                # sentinel for end-of-stream
+                result_q.put(None)
+
+            else:
+                result_q.put(RuntimeError(f"Unknown job_type: {job_type}"))
+
+        except Exception as e:
+            # propagate error to caller; for stream also send sentinel
+            result_q.put(e)
+            if job_type == "stream":
+                result_q.put(None)
+
+
 @app.on_event("startup")
-def _load_model():
-    global generator
-    print("[tts_server] Loading CSM-1B...")
-    generator = load_csm_1b("cuda")
-    print("[tts_server] CSM-1B ready.")
+def _startup():
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
 
 
-# ---- old blocking endpoint (keep it) ----
+# ---------- blocking WAV endpoint ----------
+
 def _synthesize_to_wav_bytes(text: str, speaker: int) -> bytes:
-    audio = generator.generate(
-        text=text,
-        speaker=speaker,
-        context=[],
-        stream=True,  # internal streaming, but we wait for full result
-    )
+    result_q: "queue.Queue[Any]" = queue.Queue()
+    _job_queue.put(("wav", text, speaker, result_q))
+    result = result_q.get()
+
+    if isinstance(result, Exception):
+        raise result
+
+    audio = result  # torch.Tensor [T]
     if audio is None or audio.numel() == 0:
         return b""
 
@@ -42,7 +93,7 @@ def _synthesize_to_wav_bytes(text: str, speaker: int) -> bytes:
     torchaudio.save(
         buf,
         audio.unsqueeze(0).cpu(),
-        generator.sample_rate,
+        _generator.sample_rate,
         format="wav",
     )
     buf.seek(0)
@@ -55,31 +106,31 @@ def tts_wav(req: TTSRequest):
     return StreamingResponse(io.BytesIO(wav_bytes), media_type="audio/wav")
 
 
-# ---- NEW: true streaming endpoint ----
+# ---------- true streaming endpoint ----------
+
 def _pcm_chunk_stream(text: str, speaker: int) -> PyGenerator[bytes, None, None]:
     """
-    Yields raw float32 PCM bytes in small chunks as CSM generates them.
-    Client must know sample_rate (we send it via header).
+    Yields raw float32 PCM bytes as CSM generates them, via the worker thread.
     """
-    for chunk in generator.generate_stream(
-        text=text,
-        speaker=speaker,
-        context=[],
-    ):
-        if chunk is None or chunk.numel() == 0:
-            continue
+    result_q: "queue.Queue[Any]" = queue.Queue()
+    _job_queue.put(("stream", text, speaker, result_q))
 
-        # Ensure CPU float32
-        if isinstance(chunk, torch.Tensor):
-            chunk = chunk.detach().to(torch.float32).cpu()
+    while True:
+        item = result_q.get()
+        if item is None:
+            # end-of-stream sentinel
+            break
+        if isinstance(item, Exception):
+            raise item
 
-        # Convert to bytes (float32 little-endian)
+        chunk = item  # torch.Tensor on CPU, float32 [T]
         yield chunk.numpy().tobytes()
 
 
 @app.post("/tts/stream")
 def tts_stream(req: TTSRequest):
-    headers = {"X-Sample-Rate": str(generator.sample_rate)}
+    # sample_rate is stable once model is loaded
+    headers = {"X-Sample-Rate": str(_generator.sample_rate)}
     return StreamingResponse(
         _pcm_chunk_stream(req.text, req.speaker),
         media_type="application/octet-stream",
