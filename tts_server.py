@@ -30,7 +30,6 @@ def _worker():
     print("[worker] Loading CSM-1B (with compile)…")
     _generator = load_csm_1b("cuda")
     print("[worker] CSM-1B ready.")
-    first_chunk = True
 
     while True:
 
@@ -51,6 +50,7 @@ def _worker():
             elif job_type == "stream":
                 # streaming generation: push chunks into result_q
                 start = time.time()
+                first_chunk = True # used for latency measurement
                 for chunk in _generator.generate_stream(
                     text=text,
                     speaker=speaker,

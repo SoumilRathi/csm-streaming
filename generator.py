@@ -64,7 +64,7 @@ class Generator:
         self.sample_rate = mimi.sample_rate
         self.device = device
 
-        self._stream_buffer_size = 10
+        self._stream_buffer_size = 20
         self.max_seq_len = 2048
         self._cache = OrderedDict()
         self._text_token_cache = {}
@@ -578,7 +578,7 @@ def load_csm_1b_local(model_path: str, device: str = "cuda", audio_num_codebooks
     print("Model compilation complete. Creating generator...")
 
     generator = Generator(model)
-    generator._stream_buffer_size = 10
+    generator._stream_buffer_size = 20
 
     # Setup tokenization caching
     generator._tokenization_cache = {}
@@ -761,7 +761,7 @@ def load_csm_1b(device: str = "cuda") -> Generator:
     
     generator = Generator(model)
     
-    generator._stream_buffer_size = 10
+    generator._stream_buffer_size = 20
     
     
     generator._tokenization_cache = {}
