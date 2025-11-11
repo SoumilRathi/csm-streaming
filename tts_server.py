@@ -15,8 +15,8 @@ from generator import load_csm_1b
 app = FastAPI()
 
 # job_type: "wav" or "stream"
-# job: (job_type, text, speaker, result_queue)
-_job_queue: "queue.Queue[Tuple[str, str, int, queue.Queue]]" = queue.Queue()
+# job: (job_type, text, speaker, enqueue_time, result_queue)
+_job_queue: "queue.Queue[Tuple[str, str, int, float, queue.Queue]]" = queue.Queue()
 _generator = None
 
 
@@ -33,7 +33,10 @@ def _worker():
     first_chunk = True
 
     while True:
-        job_type, text, speaker, result_q = _job_queue.get()
+
+        job_type, text, speaker, result_q, enqueue_time = _job_queue.get()
+        worker_start_time = time.time()
+        print(f"[worker] queue wait: {worker_start_time - enqueue_time:.3f}s")
         try:
             if job_type == "wav":
                 # full generation
@@ -85,8 +88,11 @@ def _startup():
 
 def _synthesize_to_wav_bytes(text: str, speaker: int) -> bytes:
     result_q: "queue.Queue[Any]" = queue.Queue()
-    _job_queue.put(("wav", text, speaker, result_q))
+    enqueue_time = time.time()
+    _job_queue.put(("wav", text, speaker, result_q, enqueue_time))
     result = result_q.get()
+    dequeue_time = time.time()
+    print(f"[worker] time to dequeue: {dequeue_time - enqueue_time:.3f}s")
 
     if isinstance(result, Exception):
         raise result
@@ -119,7 +125,10 @@ def _pcm_chunk_stream(text: str, speaker: int) -> PyGenerator[bytes, None, None]
     Yields raw float32 PCM bytes as CSM generates them, via the worker thread.
     """
     result_q: "queue.Queue[Any]" = queue.Queue()
-    _job_queue.put(("stream", text, speaker, result_q))
+    enqueue_time = time.time()
+    # _job_queue.put(("stream", text, speaker, result_q))
+    _job_queue.put(("stream", text, speaker, result_q, enqueue_time))
+
 
     while True:
         item = result_q.get()
