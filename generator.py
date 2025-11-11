@@ -751,6 +751,7 @@ def load_csm_1b(device: str = "cuda") -> Generator:
     model = Model.from_pretrained("sesame/csm-1b")
     
     dtype = torch.bfloat16 if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else torch.float16
+    torch._inductor.config.triton.cudagraphs = False
     model.backbone = torch.compile(model.backbone,mode='reduce-overhead', fullgraph=True, backend='inductor')
     model.decoder = torch.compile(model.decoder,mode='reduce-overhead', fullgraph=True, backend='inductor')
 
