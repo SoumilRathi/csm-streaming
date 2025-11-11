@@ -3,7 +3,7 @@ import io
 import threading
 import queue
 from typing import Generator as PyGenerator, Tuple, Any
-
+import time
 import torch
 import torchaudio
 from fastapi import FastAPI
@@ -30,6 +30,7 @@ def _worker():
     print("[worker] Loading CSM-1B (with compile)…")
     _generator = load_csm_1b("cuda")
     print("[worker] CSM-1B ready.")
+    first_chunk = True
 
     while True:
         job_type, text, speaker, result_q = _job_queue.get()
@@ -46,11 +47,16 @@ def _worker():
 
             elif job_type == "stream":
                 # streaming generation: push chunks into result_q
+                start = time.time()
                 for chunk in _generator.generate_stream(
                     text=text,
                     speaker=speaker,
                     context=[],
                 ):
+                    if first_chunk:
+                        time_to_first_chunk = time.time()
+                        print(f"[worker] time to first chunk: {time_to_first_chunk - start:.3f}s")
+                        first_chunk = False
                     if chunk is None or chunk.numel() == 0:
                         continue
                     if isinstance(chunk, torch.Tensor):
