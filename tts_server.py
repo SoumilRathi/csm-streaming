@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from generator import load_csm_1b
+from generator import load_csm_1b, Segment, load_audio
 
 app = FastAPI()
 
