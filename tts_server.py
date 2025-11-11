@@ -31,6 +31,34 @@ def _worker():
     _generator = load_csm_1b("cuda")
     print("[worker] CSM-1B ready.")
 
+    context_segments = [
+        Segment(
+            text="You've got about 20 unread Slack messages. Want a quick digest?",
+            speaker=0,
+            audio=load_audio("refs/ref_0.wav"),
+        ),
+        Segment(
+            text="That summary I made yesterday is still in drafts. Should I post it?",
+            speaker=0,
+            audio=load_audio("refs/ref_1.wav"),
+        ),
+        Segment(
+            text="Your draft proposal looks almost done",
+            speaker=0,
+            audio=load_audio("refs/ref_2.wav"),
+        ),
+        Segment(
+            text="Wow, your CPU temperature just spiked. Either you're training a model or launching a rocket.",
+            speaker=0,
+            audio=load_audio("refs/ref_3.wav"),
+        ),
+        Segment(
+            text="You're on a roll today. Keep that streak going.",
+            speaker=0,
+            audio=load_audio("refs/ref_4.wav"),
+        ),
+    ]
+
     while True:
 
         job_type, text, speaker, result_q, enqueue_time = _job_queue.get()
@@ -42,7 +70,7 @@ def _worker():
                 audio = _generator.generate(
                     text=text,
                     speaker=speaker,
-                    context=[],
+                    context=context_segments,
                     stream=True,  # internal streaming, but we return full tensor
                 )
                 result_q.put(audio)
@@ -53,8 +81,8 @@ def _worker():
                 first_chunk = True # used for latency measurement
                 for chunk in _generator.generate_stream(
                     text=text,
-                    speaker=speaker,
-                    context=[],
+                    speaker=0,
+                    context=context_segments,
                 ):
                     if first_chunk:
                         time_to_first_chunk = time.time()
