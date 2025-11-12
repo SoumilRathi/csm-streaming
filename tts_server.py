@@ -6,7 +6,7 @@ from typing import Generator as PyGenerator, Tuple, Any
 import time
 import torch
 import torchaudio
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -145,6 +145,23 @@ def _synthesize_to_wav_bytes(text: str, speaker: int) -> bytes:
     buf.seek(0)
     return buf.read()
 
+@app.get("/ping/stream")
+async def ping_stream(req: Request):
+    server_t0 = time.time()
+    client_host = req.client.host if req.client else "unknown"
+    print(f"[ping] handler entered from {client_host} at t0")
+
+    async def gen():
+        first = True
+        for _ in range(5):
+            if first:
+                print(f"[ping] first bytes generated at +{time.time() - server_t0:.3f}s")
+                first = False
+            # 4096 bytes of junk
+            yield b"\0" * 4096
+            await asyncio.sleep(0.01)
+
+    return StreamingResponse(gen(), media_type="application/octet-stream")
 
 @app.post("/tts/wav")
 def tts_wav(req: TTSRequest):
