@@ -46,33 +46,33 @@ def _worker():
         return out
     _generator._audio_tokenizer.encode = _enc_wrap
 
-    # context_segments = [
-    #     Segment(
-    #         text="You've got about 20 unread Slack messages. Want a quick digest?",
-    #         speaker=0,
-    #         audio=load_audio("refs/ref_0.wav", _generator),
-    #     ),
-    #     Segment(
-    #         text="That summary I made yesterday is still in drafts. Should I post it?",
-    #         speaker=0,
-    #         audio=load_audio("refs/ref_1.wav", _generator),
-    #     ),
-    #     Segment(
-    #         text="Your draft proposal looks almost done",
-    #         speaker=0,
-    #         audio=load_audio("refs/ref_2.wav", _generator),
-    #     ),
-    #     Segment(
-    #         text="Wow, your CPU temperature just spiked. Either you're training a model or launching a rocket.",
-    #         speaker=0,
-    #         audio=load_audio("refs/ref_3.wav", _generator),
-    #     ),
-    #     Segment(
-    #         text="You're on a roll today. Keep that streak going.",
-    #         speaker=0,
-    #         audio=load_audio("refs/ref_4.wav", _generator),
-    #     ),
-    # ]
+    context_segments = [
+        Segment(
+            text="You've got about 20 unread Slack messages. Want a quick digest?",
+            speaker=0,
+            audio=load_audio("refs/ref_0.wav", _generator),
+        ),
+        Segment(
+            text="That summary I made yesterday is still in drafts. Should I post it?",
+            speaker=0,
+            audio=load_audio("refs/ref_1.wav", _generator),
+        ),
+        Segment(
+            text="Your draft proposal looks almost done",
+            speaker=0,
+            audio=load_audio("refs/ref_2.wav", _generator),
+        ),
+        Segment(
+            text="Wow, your CPU temperature just spiked. Either you're training a model or launching a rocket.",
+            speaker=0,
+            audio=load_audio("refs/ref_3.wav", _generator),
+        ),
+        Segment(
+            text="You're on a roll today. Keep that streak going.",
+            speaker=0,
+            audio=load_audio("refs/ref_4.wav", _generator),
+        ),
+    ]
 
     while True:
 
@@ -97,7 +97,7 @@ def _worker():
                 for chunk in _generator.generate_stream(
                     text=text,
                     speaker=0,
-                    # context=context_segments,
+                    context=context_segments,
                     context=[]
                 ):
                     if first_chunk:
