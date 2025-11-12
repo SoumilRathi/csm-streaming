@@ -86,7 +86,7 @@ def _worker():
     encoded_context = []
     for text, p in raw_refs:
         try:
-            wav = _load_wav(p)
+            wav = _load_audio(p, _generator)
             codes = _encode_once(wav)
             encoded_context.append(Segment(text=text, speaker=0, audio=codes))
         except Exception as e:
