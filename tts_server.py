@@ -7,7 +7,6 @@ from typing import Generator as PyGenerator, Tuple, Any
 import time
 import torch
 import torchaudio
-from hashlib import sha1
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -21,12 +20,12 @@ app = FastAPI()
 _job_queue: "queue.Queue[Tuple[str, str, int, queue.Queue, float]]" = queue.Queue()
 _generator = None
 
-# def load_audio(path, generator):
-#     wav, sr = torchaudio.load(path)
-#     wav = torchaudio.functional.resample(
-#         wav.squeeze(0), sr, generator.sample_rate
-#     )
-#     return wav
+def load_audio(path, generator):
+    wav, sr = torchaudio.load(path)
+    wav = torchaudio.functional.resample(
+        wav.squeeze(0), sr, generator.sample_rate
+    )
+    return wav
 
 class TTSRequest(BaseModel):
     text: str
@@ -37,8 +36,6 @@ def _worker():
     global _generator
     print("[worker] Loading CSM-1B (with compile)…")
     _generator = load_csm_1b("cuda")
-    # earlier first chunk
-    _generator._stream_buffer_size = 5
     print("[worker] CSM-1B ready.")
     orig_encode = _generator._audio_tokenizer.encode
     import time as _t
@@ -48,85 +45,34 @@ def _worker():
         print(f"[enc] mimi encode took {(_t.time()-t0):.3f}s")
         return out
     _generator._audio_tokenizer.encode = _enc_wrap
-    # ---------- Pre-encode reference audio once and reuse Mimi codes ----------
-    def load_audio(path, generator):
-        wav, sr = torchaudio.load(path)              # [C, T]
-        if wav.dim() == 1:                           # safety
-            wav = wav.unsqueeze(0)                   # [1, T]
-        if wav.size(0) > 1:                          # stereo → mono
-            wav = wav.mean(dim=0, keepdim=True)      # [1, T]
-        wav = torchaudio.functional.resample(wav, sr, generator.sample_rate)  # [1, T]
-        wav = wav.to(torch.float32).clamp_(-1, 1).contiguous()
-        wav = wav.unsqueeze(0)                       # [B=1, C=1, T]
-        return wav
 
-    _enc_cache = {}
-
-    def _encode_once(wav_cpu_bct: torch.Tensor):
-        # wav_cpu_bct: [1,1,T] on CPU
-        key = sha1(wav_cpu_bct.numpy().tobytes()).hexdigest()
-        if key not in _enc_cache:
-            wav_cuda = wav_cpu_bct.to(device="cuda", non_blocking=True)   # <<< move to CUDA
-            _enc_cache[key] = _generator._audio_tokenizer.encode(wav_cuda)
-        return _enc_cache[key]
-
-
-    raw_refs = [
-        (
-            "You've got about 20 unread Slack messages. Want a quick digest?",
-            "refs/ref_0.wav",
+    context_segments = [
+        Segment(
+            text="You've got about 20 unread Slack messages. Want a quick digest?",
+            speaker=0,
+            audio=load_audio("refs/ref_0.wav", _generator),
         ),
-        (
-            "That summary I made yesterday is still in drafts. Should I post it?",
-            "refs/ref_1.wav",
+        # Segment(
+        #     text="That summary I made yesterday is still in drafts. Should I post it?",
+        #     speaker=0,
+        #     audio=load_audio("refs/ref_1.wav", _generator),
+        # ),
+        Segment(
+            text="I just ran diagnostics; your GPU temperature's stable.",
+            speaker=0,
+            audio=load_audio("refs/untitled #120.wav", _generator),
         ),
-        (
-            "I just ran diagnostics; your GPU temperature's stable.",
-            "refs/untitled #120.wav",
-        ),
+        # Segment(
+        #     text="Wow, your CPU temperature just spiked. Either you're training a model or launching a rocket.",
+        #     speaker=0,
+        #     audio=load_audio("refs/ref_3.wav", _generator),
+        # ),
+        # Segment(
+        #     text="You're on a roll today. Keep that streak going.",
+        #     speaker=0,
+        #     audio=load_audio("refs/ref_4.wav", _generator),
+        # ),
     ]
-
-    encoded_context = []
-    for text, p in raw_refs:
-        try:
-            wav = load_audio(p, _generator)
-            codes = _encode_once(wav)
-            encoded_context.append(Segment(text=text, speaker=0, audio=codes))
-        except Exception as e:
-            print(f"[worker] Failed to prepare ref '{p}': {e}")
-
-    # Carry-over context: keep ~0.25s of the last audio from previous stream
-    tail_window_samples = int(0.25 * _generator.sample_rate)
-    carry_context = []  # updated after each stream request completes
-
-    # NOTE: Previous waveform-based context (re-encoded per request) kept for reference.
-    # context_segments = [
-    #     Segment(
-    #         text="You've got about 20 unread Slack messages. Want a quick digest?",
-    #         speaker=0,
-    #         audio=load_audio("refs/ref_0.wav", _generator),
-    #     ),
-    #     # Segment(
-    #     #     text="That summary I made yesterday is still in drafts. Should I post it?",
-    #     #     speaker=0,
-    #     #     audio=load_audio("refs/ref_1.wav", _generator),
-    #     # ),
-    #     Segment(
-    #         text="I just ran diagnostics; your GPU temperature's stable.",
-    #         speaker=0,
-    #         audio=load_audio("refs/untitled #120.wav", _generator),
-    #     ),
-    #     # Segment(
-    #     #     text="Wow, your CPU temperature just spiked. Either you're training a model or launching a rocket.",
-    #     #     speaker=0,
-    #     #     audio=load_audio("refs/ref_3.wav", _generator),
-    #     # ),
-    #     # Segment(
-    #     #     text="You're on a roll today. Keep that streak going.",
-    #     #     speaker=0,
-    #     #     audio=load_audio("refs/ref_4.wav", _generator),
-    #     # ),
-    # ]
 
     while True:
 
@@ -136,11 +82,10 @@ def _worker():
         try:
             if job_type == "wav":
                 # full generation
-                context_for_req = carry_context + encoded_context
                 audio = _generator.generate(
                     text=text,
                     speaker=speaker,
-                    context=context_for_req,
+                    context=context_segments,
                     stream=True,  # internal streaming, but we return full tensor
                 )
                 result_q.put(audio)
@@ -149,12 +94,10 @@ def _worker():
                 # streaming generation: push chunks into result_q
                 start = time.time()
                 first_chunk = True # used for latency measurement
-                context_for_req = carry_context + encoded_context
-                last_buffer = torch.empty(0, dtype=torch.float32)
                 for chunk in _generator.generate_stream(
                     text=text,
                     speaker=0,
-                    context=context_for_req,
+                    context=context_segments,
                     # context=[]
                 ):
                     if first_chunk:
@@ -165,28 +108,9 @@ def _worker():
                         continue
                     if isinstance(chunk, torch.Tensor):
                         chunk = chunk.detach().to(torch.float32).cpu()
-                    # Maintain rolling tail buffer of ~0.25s
-                    if last_buffer.numel() == 0:
-                        last_buffer = chunk
-                    else:
-                        cat = torch.cat((last_buffer, chunk), dim=0)
-                        if cat.numel() > tail_window_samples:
-                            last_buffer = cat[-tail_window_samples:]
-                        else:
-                            last_buffer = cat
                     result_q.put(chunk)
                 # sentinel for end-of-stream
                 result_q.put(None)
-                # After finishing a stream, update carry-over context
-                try:
-                    if last_buffer.numel() > 0:
-                        tail = last_buffer[-tail_window_samples:].contiguous().cpu()
-                        tail_codes = _encode_once(tail)
-                        carry_context = [Segment(text="", speaker=0, audio=tail_codes)]
-                    else:
-                        carry_context = []
-                except Exception as e:
-                    print(f"[worker] Failed to update carry-over context: {e}")
 
             else:
                 result_q.put(RuntimeError(f"Unknown job_type: {job_type}"))
