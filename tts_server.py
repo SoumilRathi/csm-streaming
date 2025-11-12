@@ -7,6 +7,7 @@ from typing import Generator as PyGenerator, Tuple, Any
 import time
 import torch
 import torchaudio
+from hashlib import sha1
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -36,6 +37,8 @@ def _worker():
     global _generator
     print("[worker] Loading CSM-1B (with compile)…")
     _generator = load_csm_1b("cuda")
+    # earlier first chunk
+    _generator._stream_buffer_size = 5
     print("[worker] CSM-1B ready.")
     orig_encode = _generator._audio_tokenizer.encode
     import time as _t
@@ -45,34 +48,72 @@ def _worker():
         print(f"[enc] mimi encode took {(_t.time()-t0):.3f}s")
         return out
     _generator._audio_tokenizer.encode = _enc_wrap
+    # ---------- Pre-encode reference audio once and reuse Mimi codes ----------
+    def _load_wav(path: str):
+        wav, sr = torchaudio.load(path)
+        wav = torchaudio.functional.resample(wav.squeeze(0), sr, _generator.sample_rate)
+        return wav.contiguous().cpu()
 
-    context_segments = [
-        Segment(
-            text="You've got about 20 unread Slack messages. Want a quick digest?",
-            speaker=0,
-            audio=load_audio("refs/ref_0.wav", _generator),
+    _enc_cache = {}
+
+    def _encode_once(wav_cpu_f32: torch.Tensor):
+        key = sha1(wav_cpu_f32.numpy().tobytes()).hexdigest()
+        if key not in _enc_cache:
+            _enc_cache[key] = _generator._audio_tokenizer.encode(wav_cpu_f32)
+        return _enc_cache[key]
+
+    raw_refs = [
+        (
+            "You've got about 20 unread Slack messages. Want a quick digest?",
+            "refs/ref_0.wav",
         ),
-        # Segment(
-        #     text="That summary I made yesterday is still in drafts. Should I post it?",
-        #     speaker=0,
-        #     audio=load_audio("refs/ref_1.wav", _generator),
-        # ),
-        Segment(
-            text="I just ran diagnostics; your GPU temperature's stable.",
-            speaker=0,
-            audio=load_audio("refs/untitled #120.wav", _generator),
+        (
+            "That summary I made yesterday is still in drafts. Should I post it?",
+            "refs/ref_1.wav",
         ),
-        # Segment(
-        #     text="Wow, your CPU temperature just spiked. Either you're training a model or launching a rocket.",
-        #     speaker=0,
-        #     audio=load_audio("refs/ref_3.wav", _generator),
-        # ),
-        # Segment(
-        #     text="You're on a roll today. Keep that streak going.",
-        #     speaker=0,
-        #     audio=load_audio("refs/ref_4.wav", _generator),
-        # ),
+        (
+            "I just ran diagnostics; your GPU temperature's stable.",
+            "refs/untitled #120.wav",
+        ),
     ]
+
+    encoded_context = []
+    for text, p in raw_refs:
+        try:
+            wav = _load_wav(p)
+            codes = _encode_once(wav)
+            encoded_context.append(Segment(text=text, speaker=0, audio=codes))
+        except Exception as e:
+            print(f"[worker] Failed to prepare ref '{p}': {e}")
+
+    # NOTE: Previous waveform-based context (re-encoded per request) kept for reference.
+    # context_segments = [
+    #     Segment(
+    #         text="You've got about 20 unread Slack messages. Want a quick digest?",
+    #         speaker=0,
+    #         audio=load_audio("refs/ref_0.wav", _generator),
+    #     ),
+    #     # Segment(
+    #     #     text="That summary I made yesterday is still in drafts. Should I post it?",
+    #     #     speaker=0,
+    #     #     audio=load_audio("refs/ref_1.wav", _generator),
+    #     # ),
+    #     Segment(
+    #         text="I just ran diagnostics; your GPU temperature's stable.",
+    #         speaker=0,
+    #         audio=load_audio("refs/untitled #120.wav", _generator),
+    #     ),
+    #     # Segment(
+    #     #     text="Wow, your CPU temperature just spiked. Either you're training a model or launching a rocket.",
+    #     #     speaker=0,
+    #     #     audio=load_audio("refs/ref_3.wav", _generator),
+    #     # ),
+    #     # Segment(
+    #     #     text="You're on a roll today. Keep that streak going.",
+    #     #     speaker=0,
+    #     #     audio=load_audio("refs/ref_4.wav", _generator),
+    #     # ),
+    # ]
 
     while True:
 
@@ -85,7 +126,7 @@ def _worker():
                 audio = _generator.generate(
                     text=text,
                     speaker=speaker,
-                    context=context_segments,
+                    context=encoded_context,
                     stream=True,  # internal streaming, but we return full tensor
                 )
                 result_q.put(audio)
@@ -97,7 +138,7 @@ def _worker():
                 for chunk in _generator.generate_stream(
                     text=text,
                     speaker=0,
-                    context=context_segments,
+                    context=encoded_context,
                     # context=[]
                 ):
                     if first_chunk:
