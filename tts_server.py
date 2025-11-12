@@ -52,26 +52,26 @@ def _worker():
             speaker=0,
             audio=load_audio("refs/ref_0.wav", _generator),
         ),
+        # Segment(
+        #     text="That summary I made yesterday is still in drafts. Should I post it?",
+        #     speaker=0,
+        #     audio=load_audio("refs/ref_1.wav", _generator),
+        # ),
         Segment(
-            text="That summary I made yesterday is still in drafts. Should I post it?",
+            text="I just ran diagnostics; your GPU temperature's stable.",
             speaker=0,
-            audio=load_audio("refs/ref_1.wav", _generator),
+            audio=load_audio("refs/untitled #120.wav", _generator),
         ),
-        Segment(
-            text="Your draft proposal looks almost done",
-            speaker=0,
-            audio=load_audio("refs/ref_2.wav", _generator),
-        ),
-        Segment(
-            text="Wow, your CPU temperature just spiked. Either you're training a model or launching a rocket.",
-            speaker=0,
-            audio=load_audio("refs/ref_3.wav", _generator),
-        ),
-        Segment(
-            text="You're on a roll today. Keep that streak going.",
-            speaker=0,
-            audio=load_audio("refs/ref_4.wav", _generator),
-        ),
+        # Segment(
+        #     text="Wow, your CPU temperature just spiked. Either you're training a model or launching a rocket.",
+        #     speaker=0,
+        #     audio=load_audio("refs/ref_3.wav", _generator),
+        # ),
+        # Segment(
+        #     text="You're on a roll today. Keep that streak going.",
+        #     speaker=0,
+        #     audio=load_audio("refs/ref_4.wav", _generator),
+        # ),
     ]
 
     while True:
