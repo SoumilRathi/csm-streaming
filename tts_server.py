@@ -16,8 +16,8 @@ from generator import load_csm_1b, Segment
 app = FastAPI()
 
 # job_type: "wav" or "stream"
-# job: (job_type, text, speaker, enqueue_time, result_queue)
-_job_queue: "queue.Queue[Tuple[str, str, int, float, queue.Queue]]" = queue.Queue()
+# job: (job_type, text, speaker, result_queue, enqueue_time)
+_job_queue: "queue.Queue[Tuple[str, str, int, queue.Queue, float]]" = queue.Queue()
 _generator = None
 
 def load_audio(path, generator):
@@ -37,34 +37,42 @@ def _worker():
     print("[worker] Loading CSM-1B (with compile)…")
     _generator = load_csm_1b("cuda")
     print("[worker] CSM-1B ready.")
+    orig_encode = _generator._audio_tokenizer.encode
+    import time as _t
+    def _enc_wrap(wav):
+        t0 = _t.time()
+        out = orig_encode(wav)
+        print(f"[enc] mimi encode took {(_t.time()-t0):.3f}s")
+        return out
+    _generator._audio_tokenizer.encode = _enc_wrap
 
-    context_segments = [
-        Segment(
-            text="You've got about 20 unread Slack messages. Want a quick digest?",
-            speaker=0,
-            audio=load_audio("refs/ref_0.wav", _generator),
-        ),
-        Segment(
-            text="That summary I made yesterday is still in drafts. Should I post it?",
-            speaker=0,
-            audio=load_audio("refs/ref_1.wav", _generator),
-        ),
-        Segment(
-            text="Your draft proposal looks almost done",
-            speaker=0,
-            audio=load_audio("refs/ref_2.wav", _generator),
-        ),
-        Segment(
-            text="Wow, your CPU temperature just spiked. Either you're training a model or launching a rocket.",
-            speaker=0,
-            audio=load_audio("refs/ref_3.wav", _generator),
-        ),
-        Segment(
-            text="You're on a roll today. Keep that streak going.",
-            speaker=0,
-            audio=load_audio("refs/ref_4.wav", _generator),
-        ),
-    ]
+    # context_segments = [
+    #     Segment(
+    #         text="You've got about 20 unread Slack messages. Want a quick digest?",
+    #         speaker=0,
+    #         audio=load_audio("refs/ref_0.wav", _generator),
+    #     ),
+    #     Segment(
+    #         text="That summary I made yesterday is still in drafts. Should I post it?",
+    #         speaker=0,
+    #         audio=load_audio("refs/ref_1.wav", _generator),
+    #     ),
+    #     Segment(
+    #         text="Your draft proposal looks almost done",
+    #         speaker=0,
+    #         audio=load_audio("refs/ref_2.wav", _generator),
+    #     ),
+    #     Segment(
+    #         text="Wow, your CPU temperature just spiked. Either you're training a model or launching a rocket.",
+    #         speaker=0,
+    #         audio=load_audio("refs/ref_3.wav", _generator),
+    #     ),
+    #     Segment(
+    #         text="You're on a roll today. Keep that streak going.",
+    #         speaker=0,
+    #         audio=load_audio("refs/ref_4.wav", _generator),
+    #     ),
+    # ]
 
     while True:
 
@@ -89,7 +97,8 @@ def _worker():
                 for chunk in _generator.generate_stream(
                     text=text,
                     speaker=0,
-                    context=context_segments,
+                    # context=context_segments,
+                    context=[]
                 ):
                     if first_chunk:
                         time_to_first_chunk = time.time()
@@ -178,7 +187,7 @@ def _pcm_chunk_stream(text: str, speaker: int) -> PyGenerator[bytes, None, None]
     """
     result_q: "queue.Queue[Any]" = queue.Queue()
     enqueue_time = time.time()
-    # _job_queue.put(("stream", text, speaker, result_q))
+    # _job_queue.put(("stream", text, speaker, result_q, enqueue_time))
     _job_queue.put(("stream", text, speaker, result_q, enqueue_time))
 
 
