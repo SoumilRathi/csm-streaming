@@ -21,12 +21,12 @@ app = FastAPI()
 _job_queue: "queue.Queue[Tuple[str, str, int, queue.Queue, float]]" = queue.Queue()
 _generator = None
 
-def load_audio(path, generator):
-    wav, sr = torchaudio.load(path)
-    wav = torchaudio.functional.resample(
-        wav.squeeze(0), sr, generator.sample_rate
-    )
-    return wav
+# def load_audio(path, generator):
+#     wav, sr = torchaudio.load(path)
+#     wav = torchaudio.functional.resample(
+#         wav.squeeze(0), sr, generator.sample_rate
+#     )
+#     return wav
 
 class TTSRequest(BaseModel):
     text: str
@@ -62,11 +62,14 @@ def _worker():
 
     _enc_cache = {}
 
-    def _encode_once(wav_cpu_f32: torch.Tensor):
-        key = sha1(wav_cpu_f32.numpy().tobytes()).hexdigest()
+    def _encode_once(wav_cpu_bct: torch.Tensor):
+        # wav_cpu_bct: [1,1,T] on CPU
+        key = sha1(wav_cpu_bct.numpy().tobytes()).hexdigest()
         if key not in _enc_cache:
-            _enc_cache[key] = _generator._audio_tokenizer.encode(wav_cpu_f32)
+            wav_cuda = wav_cpu_bct.to(device="cuda", non_blocking=True)   # <<< move to CUDA
+            _enc_cache[key] = _generator._audio_tokenizer.encode(wav_cuda)
         return _enc_cache[key]
+
 
     raw_refs = [
         (
