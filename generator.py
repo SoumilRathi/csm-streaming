@@ -170,6 +170,7 @@ class Generator:
         """
         Generate audio in a streaming fashion, optimized for lower latency to first chunk.
         """
+        t0 = time.time()
         if torch.cuda.is_available():
             torch.backends.cuda.matmul.allow_tf32 = True
             torch.backends.cudnn.benchmark = True
@@ -227,9 +228,12 @@ class Generator:
             curr_tokens_mask = torch.cat([ones, zeros_mask_1_1], dim=1).unsqueeze(1)
             curr_pos = curr_pos[:, -1:] + 1
 
+        print(f"[gen] prompt+context prep: {time.time() - t0:.3f}s")
+
         with self._audio_tokenizer.streaming(1):
             i = 0
             generation_start = time.time()
+            first_frame_time = None
 
             while i < max_generation_len:
                 batch_end = min(i + batch_size, max_generation_len)
@@ -240,6 +244,9 @@ class Generator:
                 for _ in range(batch_size_actual):
                     with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
                         sample = self._model.generate_frame(curr_tokens, curr_tokens_mask, curr_pos, temperature, topk)
+                        if first_frame_time is None:
+                            first_frame_time = time.time()
+                            print(f"[gen] first frame time: {first_frame_time - generation_start:.3f}s")
                         if torch.cuda.is_available() and hasattr(torch, "cuda") and hasattr(torch.cuda, "is_available"):
                             try:
                                 torch.cuda.synchronize()  # Force sync before checking
@@ -262,6 +269,7 @@ class Generator:
                 i += len(batch_samples)
 
                 if len(frame_buffer) >= buffer_size:
+                    decode_start = time.time()
                     frames_to_process = frame_buffer[:expected_frame_count]
                     
                     # If we don't have enough frames, pad with zeros to match expected shape
@@ -277,6 +285,7 @@ class Generator:
                     
                     frames_stacked = torch.stack(frames_to_process).permute(1, 2, 0)
                     audio_chunk = self._audio_tokenizer.decode(frames_stacked).squeeze(0).squeeze(0)
+                    print(f"[gen] decode time: {time.time() - decode_start:.3f}s")
                     
                     # Keep remaining frames for next iteration
                     frame_buffer = frame_buffer[expected_frame_count:]
@@ -288,6 +297,7 @@ class Generator:
                     
                     # After first chunk is delivered, switch to normal batch and buffer sizes
                     if not first_chunk_delivered:
+                        print(f"[gen] total time to first chunk: {time.time() - generation_start:.3f}s")
                         batch_size = normal_batch_size
                         buffer_size = normal_buffer_size
                         expected_frame_count = buffer_size
