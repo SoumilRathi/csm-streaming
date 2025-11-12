@@ -98,7 +98,7 @@ def _worker():
                     text=text,
                     speaker=0,
                     context=context_segments,
-                    context=[]
+                    # context=[]
                 ):
                     if first_chunk:
                         time_to_first_chunk = time.time()
