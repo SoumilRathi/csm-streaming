@@ -585,6 +585,9 @@ def load_csm_1b_local(model_path: str, device: str = "cuda", audio_num_codebooks
 
     model.to(device=device, dtype=dtype)
 
+    print("Model Attention Config:", model.config.attn_implementation)
+
+
     print("Model compilation complete. Creating generator...")
 
     generator = Generator(model)
