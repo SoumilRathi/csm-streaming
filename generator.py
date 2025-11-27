@@ -769,6 +769,8 @@ def load_csm_1b(device: str = "cuda") -> Generator:
     model.decoder = torch.compile(model.decoder,mode='reduce-overhead', fullgraph=True, backend='inductor')
 
     model.to(device=device, dtype=dtype)
+
+    print("Model Attention Config:", model.config.attn_implementation)
     
     print("Model compilation complete. Creating generator...")
     
