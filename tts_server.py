@@ -399,9 +399,9 @@ def _worker():
             # propagate error to caller; for stream types also send sentinel
             result_q = job[3] if job_type == "wav" else (job[6] if job_type == "stream_session" else job[3])
             if result_q:
-            result_q.put(e)
+                result_q.put(e)
                 if job_type in ("stream", "stream_session"):
-                result_q.put(None)
+                    result_q.put(None)
 
 
 @app.on_event("startup")
