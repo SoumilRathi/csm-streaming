@@ -390,7 +390,7 @@ def _worker():
             else:
                 result_q = job[3] if len(job) > 3 else None
                 if result_q:
-                result_q.put(RuntimeError(f"Unknown job_type: {job_type}"))
+                    result_q.put(RuntimeError(f"Unknown job_type: {job_type}"))
 
         except Exception as e:
             import traceback
