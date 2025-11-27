@@ -149,6 +149,46 @@ def chunk_audio(audio: torch.Tensor, chunk_size: int = 4800) -> PyGenerator[torc
         yield audio[i:i + chunk_size]
 
 
+def find_silence_boundary(audio: torch.Tensor, search_start: int, search_end: int, 
+                          window_size: int = 480, threshold: float = 0.02) -> int:
+    """
+    Find the best cut point (lowest energy) within a search region.
+    
+    This helps avoid cutting mid-syllable by finding natural pauses or 
+    low-energy regions near the estimated boundary.
+    
+    Args:
+        audio: Full audio tensor
+        search_start: Start of search region (samples)
+        search_end: End of search region (samples)
+        window_size: Size of energy analysis window (default 480 = 20ms at 24kHz)
+        threshold: Energy threshold below which is considered silence
+    
+    Returns:
+        Best cut point (sample index)
+    """
+    if search_start >= search_end or search_end > audio.numel():
+        return search_start
+    
+    best_pos = search_start
+    min_energy = float('inf')
+    
+    # Slide window through search region
+    for pos in range(search_start, search_end - window_size, window_size // 2):
+        window = audio[pos:pos + window_size]
+        energy = torch.mean(window.abs()).item()
+        
+        if energy < min_energy:
+            min_energy = energy
+            best_pos = pos
+        
+        # If we find near-silence, use it immediately
+        if energy < threshold:
+            return pos
+    
+    return best_pos
+
+
 # =============================================================================
 # Request Models
 # =============================================================================
@@ -169,12 +209,15 @@ class TTSStreamSessionRequest(BaseModel):
         session_id: Unique session identifier for tracking state across requests
         has_more: Whether more sentences will follow in this turn
         lookahead_text: First ~3-5 words of the next sentence for prosodic continuity
+        use_lookahead: Whether to use lookahead text (default True). 
+                       Set to False to use crossfade-only mode if you experience repetition issues.
     """
     text: str
     speaker: int = 0
     session_id: str = "default"
     has_more: bool = False
     lookahead_text: str = ""
+    use_lookahead: bool = True  # Can disable to avoid repetition issues
 
 
 # =============================================================================
@@ -336,22 +379,37 @@ def _worker():
                 print(f"[worker] full audio: {full_audio.numel()} samples ({full_audio.numel() / _generator.sample_rate:.2f}s)")
                 
                 # Truncate to actual text boundary (estimate based on token ratio)
+                # IMPORTANT: We truncate BEFORE the estimated boundary to avoid repetition
+                # We also use silence detection to find natural cut points
                 if lookahead and len(lookahead) > 0:
                     try:
                         main_tokens = len(_generator._text_tokenizer.encode(f"[{speaker}]{text}"))
                         total_tokens = len(_generator._text_tokenizer.encode(f"[{speaker}]{gen_text}"))
                         ratio = main_tokens / total_tokens if total_tokens > 0 else 1.0
                         
-                        # Apply ratio with a small buffer to avoid cutting mid-phoneme
-                        # Add ~100ms (2400 samples) buffer
-                        truncate_at = min(
-                            int(full_audio.numel() * ratio) + 2400,
-                            full_audio.numel()
+                        # Estimate boundary and define search region
+                        estimated_boundary = int(full_audio.numel() * ratio)
+                        
+                        # Search for best cut point in region BEFORE the boundary
+                        # Search from -200ms to -50ms before boundary (avoid including lookahead)
+                        search_start = max(0, estimated_boundary - 4800)  # 200ms before
+                        search_end = max(search_start + 1200, estimated_boundary - 1200)  # 50ms before
+                        
+                        # Find lowest energy point in search region for natural cut
+                        truncate_at = find_silence_boundary(
+                            full_audio, 
+                            search_start, 
+                            search_end,
+                            window_size=480,  # 20ms windows
+                            threshold=0.02
                         )
+                        
+                        # Safety: never cut more than 60% of the audio
+                        truncate_at = max(truncate_at, int(full_audio.numel() * 0.4))
                         
                         original_length = full_audio.numel()
                         full_audio = full_audio[:truncate_at]
-                        print(f"[worker] truncated from {original_length} to {truncate_at} samples (ratio={ratio:.2f})")
+                        print(f"[worker] truncated from {original_length} to {truncate_at} samples (ratio={ratio:.2f}, boundary={estimated_boundary})")
                     except Exception as e:
                         print(f"[worker] Warning: truncation failed: {e}, using full audio")
                 
@@ -503,7 +561,8 @@ def _pcm_chunk_stream_session(
     text: str, 
     speaker: int,
     has_more: bool,
-    lookahead_text: str
+    lookahead_text: str,
+    use_lookahead: bool = True
 ) -> PyGenerator[bytes, None, None]:
     """
     Yields raw float32 PCM bytes with session-aware prosody continuity.
@@ -512,9 +571,13 @@ def _pcm_chunk_stream_session(
     - Lookahead text for avoiding end-of-sentence prosodic artifacts
     - Crossfading between consecutive generations in the same session
     - Automatic session state management
+    - Option to disable lookahead if repetition issues occur
     """
     result_q: "queue.Queue[Any]" = queue.Queue()
     enqueue_time = time.time()
+    
+    # If lookahead is disabled, clear the lookahead text
+    effective_lookahead = lookahead_text if use_lookahead else ""
     
     # Job format: (job_type, session_id, text, speaker, has_more, lookahead, result_q, enqueue_time)
     _job_queue.put((
@@ -523,7 +586,7 @@ def _pcm_chunk_stream_session(
         text, 
         speaker, 
         has_more, 
-        lookahead_text, 
+        effective_lookahead, 
         result_q, 
         enqueue_time
     ))
@@ -572,6 +635,7 @@ def tts_stream_session(req: TTSStreamSessionRequest):
             speaker=req.speaker,
             has_more=req.has_more,
             lookahead_text=req.lookahead_text,
+            use_lookahead=req.use_lookahead,
         ),
         media_type="application/octet-stream",
         headers=headers,
