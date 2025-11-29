@@ -185,7 +185,7 @@ class Generator:
 
         initial_batch_size = 20
         normal_batch_size = 20  
-        initial_buffer_size = 20
+        initial_buffer_size = 10
         normal_buffer_size = 20
         
         batch_size = initial_batch_size
@@ -242,11 +242,14 @@ class Generator:
                 batch_samples = []
 
                 for _ in range(batch_size_actual):
+                    frame_start = time.time()
                     with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
                         sample = self._model.generate_frame(curr_tokens, curr_tokens_mask, curr_pos, temperature, topk)
                         if first_frame_time is None:
                             first_frame_time = time.time()
-                            print(f"[gen] first frame time: {first_frame_time - generation_start:.3f}s")
+                            frame_gen_time = first_frame_time - frame_start
+                            print(f"[gen] first frame generation: {frame_gen_time*1000:.1f}ms")
+                            print(f"[gen] first frame total: {first_frame_time - generation_start:.3f}s")
                         if torch.cuda.is_available() and hasattr(torch, "cuda") and hasattr(torch.cuda, "is_available"):
                             try:
                                 torch.cuda.synchronize()  # Force sync before checking
@@ -755,6 +758,20 @@ def load_csm_1b(device: str = "cuda") -> Generator:
     torch.backends.cudnn.benchmark = True
     torch.backends.cudnn.enabled = True
     
+    # GPU diagnostic info
+    print("="*60)
+    print("GPU DIAGNOSTIC INFO")
+    print("="*60)
+    print(f"PyTorch version: {torch.__version__}")
+    print(f"CUDA version: {torch.version.cuda}")
+    if torch.cuda.is_available():
+        print(f"GPU: {torch.cuda.get_device_name()}")
+        print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+        print(f"CUDA Capability: {torch.cuda.get_device_capability()}")
+    print(f"cuDNN version: {torch.backends.cudnn.version()}")
+    print(f"Flash SDP available: {torch.backends.cuda.flash_sdp_enabled()}")
+    print("="*60)
+    
     print("Loading CSM-1B model with extreme optimizations for real-time performance...")
     
     if torch.cuda.is_available():
@@ -765,8 +782,16 @@ def load_csm_1b(device: str = "cuda") -> Generator:
     
     dtype = torch.bfloat16 if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else torch.float16
     # torch._inductor.config.triton.cudagraphs = False
+    
+    print("[compile] Starting backbone compilation...")
+    compile_start = time.time()
     model.backbone = torch.compile(model.backbone,mode='reduce-overhead', fullgraph=True, backend='inductor')
+    print(f"[compile] Backbone compiled in {time.time() - compile_start:.1f}s")
+    
+    print("[compile] Starting decoder compilation...")
+    compile_start = time.time()
     model.decoder = torch.compile(model.decoder,mode='reduce-overhead', fullgraph=True, backend='inductor')
+    print(f"[compile] Decoder compiled in {time.time() - compile_start:.1f}s")
 
     model.to(device=device, dtype=dtype)
     

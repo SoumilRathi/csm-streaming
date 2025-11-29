@@ -1,32 +1,40 @@
---extra-index-url=https://download.pytorch.org/whl/cu128
-vllm==0.8.0
-torch==2.6.0
-torchaudio==2.6.0
-torchvision==0.21.0
-tokenizers==0.21.0
-transformers==4.49.0
-huggingface_hub==0.28.1
+--extra-index-url https://download.pytorch.org/whl/cu124
+# Core Stack - Pinned to Stable (CUDA 12.4)
+torch==2.5.1
+torchaudio==2.5.1
+torchvision==0.20.1
+
+# Inference Engine - Allow flexible versioning compatible with Torch 2.5
+vllm>=0.6.3,<0.7.0
+
+# Audio/Model Deps
 moshi==0.2.2
 sounddevice
 torchtune==0.4.0
-torchao==0.9.0
+torchao==0.6.1
 bitsandbytes
 peft
 wandb
 silero_vad
-python-multipart>=0.0.6
-aiofiles>=23.1.0
 sentence-transformers>=2.2.2
 ctransformers>=0.2.24
+speechbrain>=0.5.15
+whisper-openai
+
+# Server/API
 python-multipart>=0.0.6
+aiofiles>=23.1.0
 sqlalchemy>=2.0.0
 pydantic>=2.0.0
 fastapi>=0.95.0
 uvicorn>=0.22.0
 websockets>=11.0.3
 jinja2>=3.0.0
-speechbrain>=0.5.15
+tokenizers>=0.20.0
+transformers>=4.46.0
+huggingface_hub>=0.26.0
+
+# Misc
 matplotlib
-whisper-openai
+numpy<2.0.0
 silentcipher @ git+https://github.com/SesameAILabs/silentcipher@master
-numpy==1.26.0
