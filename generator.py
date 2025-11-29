@@ -241,18 +241,40 @@ class Generator:
 
                 batch_samples = []
 
-                for _ in range(batch_size_actual):
+                for batch_idx in range(batch_size_actual):
                     frame_start = time.time()
                     with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
                         sample = self._model.generate_frame(curr_tokens, curr_tokens_mask, curr_pos, temperature, topk)
+                        if torch.cuda.is_available():
+                            torch.cuda.synchronize()  # Ensure accurate timing
+                        frame_end = time.time()
+                        frame_ms = (frame_end - frame_start) * 1000
+                        
+                        # Track frame times for statistics
+                        if not hasattr(self, '_frame_times'):
+                            self._frame_times = []
+                        self._frame_times.append(frame_ms)
+                        
+                        current_frame_num = i + batch_idx + 1
+                        
                         if first_frame_time is None:
-                            first_frame_time = time.time()
-                            frame_gen_time = first_frame_time - frame_start
-                            print(f"[gen] first frame generation: {frame_gen_time*1000:.1f}ms")
+                            first_frame_time = frame_end
+                            print(f"[gen] frame 1: {frame_ms:.1f}ms (first frame - includes compilation)")
                             print(f"[gen] first frame total: {first_frame_time - generation_start:.3f}s")
+                        elif current_frame_num <= 5:
+                            # Print first 5 frames individually
+                            print(f"[gen] frame {current_frame_num}: {frame_ms:.1f}ms")
+                        elif current_frame_num == 10:
+                            # Print frame 10 and stats so far
+                            avg_ms = sum(self._frame_times[1:]) / len(self._frame_times[1:]) if len(self._frame_times) > 1 else frame_ms
+                            print(f"[gen] frame {current_frame_num}: {frame_ms:.1f}ms (avg frames 2-10: {avg_ms:.1f}ms)")
+                        elif current_frame_num % 50 == 0:
+                            # Print every 50th frame
+                            recent_avg = sum(self._frame_times[-20:]) / 20 if len(self._frame_times) >= 20 else frame_ms
+                            print(f"[gen] frame {current_frame_num}: {frame_ms:.1f}ms (recent avg: {recent_avg:.1f}ms)")
+                        
                         if torch.cuda.is_available() and hasattr(torch, "cuda") and hasattr(torch.cuda, "is_available"):
                             try:
-                                torch.cuda.synchronize()  # Force sync before checking
                                 if sample.numel() == 0 or torch.isnan(sample).any():
                                     print("Warning: Generated empty or NaN sample, stopping generation")
                                     break
@@ -351,9 +373,26 @@ class Generator:
             frames_generated = i
             audio_seconds = frames_generated * 0.08
             rtf = total_time / audio_seconds if audio_seconds > 0 else float('inf')
-            print(f"Total time: {total_time:.2f}s")
-            print(f"Generated {frames_generated} frames ({audio_seconds:.2f}s of audio)")
-            print(f"Real-time factor: {rtf:.3f}x (target: <1.0)")
+            
+            # Frame timing statistics
+            if hasattr(self, '_frame_times') and len(self._frame_times) > 1:
+                frame_times = self._frame_times
+                avg_all = sum(frame_times) / len(frame_times)
+                avg_excluding_first = sum(frame_times[1:]) / len(frame_times[1:]) if len(frame_times) > 1 else 0
+                min_frame = min(frame_times[1:]) if len(frame_times) > 1 else 0
+                max_frame = max(frame_times[1:]) if len(frame_times) > 1 else 0
+                print(f"\n[FRAME TIMING STATS]")
+                print(f"  First frame: {frame_times[0]:.1f}ms")
+                print(f"  Avg (excluding first): {avg_excluding_first:.1f}ms")
+                print(f"  Min/Max (excluding first): {min_frame:.1f}ms / {max_frame:.1f}ms")
+                print(f"  Total frames: {len(frame_times)}")
+                # Clear for next generation
+                self._frame_times = []
+            
+            print(f"\n[GENERATION SUMMARY]")
+            print(f"  Total time: {total_time:.2f}s")
+            print(f"  Audio duration: {audio_seconds:.2f}s")
+            print(f"  Real-time factor: {rtf:.3f}x (target: <1.0)")
 
     @torch.inference_mode()
     def generate(
