@@ -583,8 +583,10 @@ def load_csm_1b_local(model_path: str, device: str = "cuda", audio_num_codebooks
 
     # torch._inductor.config.triton.cudagraphs = False
 
-    model.backbone = torch.compile(model.backbone,mode='reduce-overhead', fullgraph=True, backend='inductor')
-    model.decoder = torch.compile(model.decoder,mode='reduce-overhead', fullgraph=True, backend='inductor')
+    # Disable CUDA graphs specifically - they have issues on RTX 40-series
+    torch._inductor.config.triton.cudagraphs = False
+    model.backbone = torch.compile(model.backbone, mode='reduce-overhead', fullgraph=True, backend='inductor')
+    model.decoder = torch.compile(model.decoder, mode='reduce-overhead', fullgraph=True, backend='inductor')
 
     model.to(device=device, dtype=dtype)
 
@@ -783,14 +785,18 @@ def load_csm_1b(device: str = "cuda") -> Generator:
     dtype = torch.bfloat16 if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else torch.float16
     # torch._inductor.config.triton.cudagraphs = False
     
+    # Disable CUDA graphs specifically - they have issues on RTX 40-series
+    # but keep other reduce-overhead optimizations
+    torch._inductor.config.triton.cudagraphs = False
+    
     print("[compile] Starting backbone compilation...")
     compile_start = time.time()
-    model.backbone = torch.compile(model.backbone,mode='reduce-overhead', fullgraph=True, backend='inductor')
+    model.backbone = torch.compile(model.backbone, mode='reduce-overhead', fullgraph=True, backend='inductor')
     print(f"[compile] Backbone compiled in {time.time() - compile_start:.1f}s")
     
     print("[compile] Starting decoder compilation...")
     compile_start = time.time()
-    model.decoder = torch.compile(model.decoder,mode='reduce-overhead', fullgraph=True, backend='inductor')
+    model.decoder = torch.compile(model.decoder, mode='reduce-overhead', fullgraph=True, backend='inductor')
     print(f"[compile] Decoder compiled in {time.time() - compile_start:.1f}s")
 
     model.to(device=device, dtype=dtype)
